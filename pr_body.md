@@ -1,79 +1,46 @@
-Closes #995
+## Description
 
-## Summary
+This PR adds automated **property-based testing** for the Stellar Portfolio Rebalancer Soroban contract using the `proptest` crate. Fixes #963.
 
-Implements a paginated, filterable **rebalance history endpoint** at `GET /portfolio/:id/rebalance-history` that returns past rebalance outcomes for a given portfolio, including failed rebalances with error reasons.
+### What's Included
 
----
+#### Property Tests (`contracts/tests/property_tests.rs`)
 
-## What was added
+| ID   | Property | Invariant |
+|------|----------|-----------|
+| P1a  | Valid allocations accepted | Non-empty `u32` vector summing to 10000 with no zeroes → accepted |
+| P1b  | Invalid allocations rejected | Vectors with sum ≠ 10000, zeroes, or empty → rejected |
+| P2a  | Drift range | `compute_drift(c, t)` ∈ `[0, 10000]` for all valid inputs |
+| P2b  | Drift symmetry | `drift(a, b) == drift(b, a)` |
+| P2c  | Zero drift at equality | `drift(p, p) == 0` |
+| P3a  | Rebalance idempotency | `trade_amount == 0` when `current_balance == target_balance` |
+| P3b  | Trade sign correctness | Over-weight → sell (≤0); Under-weight → buy (≥0) |
 
-### New endpoint: `GET /portfolio/:id/rebalance-history`
+Each property is verified across **10,000 randomly-generated inputs** using the production `portfolio::value_to_balance` function so arithmetic scaling regressions are caught.
 
-Returns a paginated list of past rebalances for a portfolio. Each record includes:
+#### CI Workflow (`.github/workflows/property-tests.yml`)
+- Runs on every PR/push touching `contracts/**`
+- Uses Rust stable with wasm32 target
+- Uploads test results and failure corpus as artifacts
+- Bash strict mode (`set -euo pipefail`) for reliable exit codes
 
-| Field | Description |
-|-------|-------------|
-| `timestamp` | ISO-8601 datetime of the rebalance |
-| `trigger` | Raw trigger description |
-| `triggerType` | Normalized: `manual`, `auto`, or `circuit_breaker` |
-| `assetsTrades` | Number of asset trades executed |
-| `totalFeeXlm` | Total gas fee in XLM (null if unavailable) |
-| `totalFeeUsd` | Total gas fee in USD (null if unavailable) |
-| `totalSlippageBps` | Total slippage in basis points (null if unavailable) |
-| `status` | `success`, `partial`, or `failed` |
-| `errorReason` | Error description for failed rebalances (null otherwise) |
+#### Contract ABI Updates (`contracts/CONTRACT_ABI.md`)
+- Documented all 7 property invariants (P1-P3b)
+- Added basis-point (10000) conventions
 
-### Query Parameters (Filters)
+### CI Infrastructure Fixes
+Also included are fixes for pre-existing CI failures affecting all workflows:
+- `frontend/.npmrc`, `backend/.npmrc`: `legacy-peer-deps=true` for npm ci compatibility
+- `commitlint.config.cjs`: Ignore merge commits and conflict resolution commits
+- `backend/.env.example`: Removed duplicate keys
+- `backend/src/{api,queue,test}/`: Fixed orphaned TypeScript code (TS1128 errors)
+- `frontend/package.json`: Fixed Storybook 8.x compatibility
 
-| Param | Type | Description |
-|-------|------|-------------|
-| `from` | ISO-8601 string | Lower-bound timestamp filter (inclusive) |
-| `to` | ISO-8601 string | Upper-bound timestamp filter (inclusive) |
-| `trigger_type` | `manual` \| `auto` \| `circuit_breaker` | Filter by trigger type |
-| `status` | `success` \| `partial` \| `failed` | Filter by rebalance outcome |
-| `page` | integer (default: 1) | Page number |
-| `page_size` | integer (default: 50, max: 500) | Records per page |
-| `sort` | `asc` \| `desc` (default: desc) | Sort order by timestamp |
+## Type of Change
+- [x] New feature
+- [x] DevOps / CI / Documentation update
 
-### Response Shape
-
-```json
-{
-  "data": {
-    "history": [ /* PortfolioRebalanceHistoryItem[] */ ],
-    "pagination": {
-      "page": 1,
-      "pageSize": 50,
-      "total": 127,
-      "totalPages": 3
-    },
-    "filters": {
-      "from": null,
-      "to": null,
-      "trigger_type": null,
-      "status": null
-    }
-  }
-}
-```
-
-### Acceptance Criteria
-
-- ✅ All rebalance outcomes recorded and returned (success, partial, failed)
-- ✅ Failed rebalances include `errorReason` field with the failure description
-- ✅ Response time monitoring: queries exceeding 200ms are logged as warnings
-- ✅ Paginated with `page`, `page_size`, `total`, `totalPages`
-- ✅ Filterable by `from`, `to`, `trigger_type`, `status`
-
----
-
-## Files Changed
-
-### New files
-- `backend/src/test/rebalanceHistory.routes.test.ts` — Unit tests covering: 404 for missing portfolio, default pagination, filter passthrough, failed event error reasons, and totalPages calculation.
-
-### Modified files
-- `backend/src/api/portfolios.routes.ts` — Added `GET /portfolio/:id/rebalance-history` route
-- `backend/src/api/validation.ts` — Added `portfolioRebalanceHistoryQuerySchema` with Zod validation for all query parameters
-- `backend/src/db/rebalanceHistoryDb.ts` — Added `dbGetPortfolioRebalanceHistory()` — parameterised SQL query with dynamic WHERE clause construction, COUNT for total, and status/trigger mapping
+## Checklist
+- [x] Code follows project style guidelines
+- [x] Tests added (7 property tests, 10,000 cases each)
+- [x] Fixes #963
